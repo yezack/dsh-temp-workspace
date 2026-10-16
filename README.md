@@ -1,4 +1,4 @@
-# @wjj-8283/dsh-temp-workspace
+# @yezack/dsh-temp-workspace
 
 A DSH web **client plugin** that adds a **temporary workspace**.
 
@@ -59,7 +59,7 @@ The package is published to npm with `lib/` **prebuilt**, so installing it
 needs no build and skips pnpm's `allowBuilds` approval — a single command:
 
 ```sh
-dsh plugin --profile web add @wjj-8283/dsh-temp-workspace
+dsh plugin --profile web add @yezack/dsh-temp-workspace
 ```
 
 `dsh plugin … add` forwards the spec to pnpm inside the profile dir, then
@@ -83,7 +83,7 @@ Install it straight from GitHub with the `dsh plugin` forwarder (pnpm clone +
 
 ```sh
 # boot a profile, e.g. the web app
-dsh plugin --profile web add github:wjj-8283/dsh-temp-workspace
+dsh plugin --profile web add github:yezack/dsh-temp-workspace
 ```
 
 Because the manifest declares `dsh.bundle.patch`, the add step auto-appends
@@ -96,13 +96,13 @@ directory:
 
 ```sh
 cd "$DSH_HOME/profiles/web"
-pnpm add github:wjj-8283/dsh-temp-workspace
+pnpm add github:yezack/dsh-temp-workspace
 ```
 
 To pin a branch, tag or commit, append the usual pnpm git ref:
 
 ```sh
-dsh plugin --profile web add github:wjj-8283/dsh-temp-workspace#<ref>
+dsh plugin --profile web add github:yezack/dsh-temp-workspace#<ref>
 ```
 
 > The built client bundle (`lib/client.js`) is committed in the repo, so a git

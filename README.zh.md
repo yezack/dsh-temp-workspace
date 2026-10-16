@@ -1,4 +1,4 @@
-# @wjj-8283/dsh-temp-workspace
+# @yezack/dsh-temp-workspace
 
 一个 DSH web **客户端插件**，提供 **临时工作区（临时工作区）** 功能。
 
@@ -42,7 +42,7 @@
 该包已发布到 npm，`lib/` **为预构建产物**，安装无需构建、可跳过 pnpm 的 `allowBuilds` 授权——一条命令搞定：
 
 ```sh
-dsh plugin --profile web add @wjj-8283/dsh-temp-workspace
+dsh plugin --profile web add @yezack/dsh-temp-workspace
 ```
 
 `dsh plugin … add` 会把该 spec 转发给 profile 目录里的 pnpm，并代为合并 `dsh.profile.bundles`。因为清单声明了 `dsh.bundle.patch`，包会自动加入 Loader 层栈，下次启动 `dsh web` 时宿主把它组合为 Loader 条目、注册 `/temp-workspace/api` 路由、设置卡片进入 `__DSH_BOOT__`。
@@ -53,7 +53,7 @@ dsh plugin --profile web add @wjj-8283/dsh-temp-workspace
 
 ```sh
 # 启动某个 profile，例如 web 应用
-dsh plugin --profile web add github:wjj-8283/dsh-temp-workspace
+dsh plugin --profile web add github:yezack/dsh-temp-workspace
 ```
 
 因为清单声明了 `dsh.bundle.patch`，add 会把该包自动追加到 `dsh.profile.bundles`，下次启动 `dsh web` 时宿主就把它组合为 Loader 条目、注册 `/temp-workspace/api` 路由、设置卡片进入 `__DSH_BOOT__`。
@@ -62,13 +62,13 @@ dsh plugin --profile web add github:wjj-8283/dsh-temp-workspace
 
 ```sh
 cd "$DSH_HOME/profiles/web"
-pnpm add github:wjj-8283/dsh-temp-workspace
+pnpm add github:yezack/dsh-temp-workspace
 ```
 
 要固定到某个分支/标签/提交，按 pnpm 的 git ref 语法追加：
 
 ```sh
-dsh plugin --profile web add github:wjj-8283/dsh-temp-workspace#<ref>
+dsh plugin --profile web add github:yezack/dsh-temp-workspace#<ref>
 ```
 
 > 构建后的客户端 bundle（`lib/client.js`）已提交在仓库里，所以 git 安装不需要构建步骤。要改它，克隆仓库后用 `node build.mjs --watch`（见[开发循环](#开发循环)），或改为从本地 checkout 安装（见[接入 profile](#接入-profile)）。

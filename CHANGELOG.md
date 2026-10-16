@@ -21,6 +21,12 @@ All notable changes to this project are documented in this file.
   lists `2026-10-16 09:45` instead of a throwaway folder's UUID.
 
 ### Changed
+- **Published as `@yezack/dsh-temp-workspace`** — this fork's own scope is the
+  only one this repository can publish to, so the package name, the Loader
+  entry's `name`, and the `homepage`/`repository`/`bugs` URLs now all point at
+  `yezack/dsh-temp-workspace`. The Loader entry **id** and the settings
+  namespace stay `dsh-temp-workspace`, so existing settings are untouched;
+  only the install spec changes.
 - **New temp workspaces are named after their creation moment**
   (`yyyy-MM-dd HH:mm`, local time) instead of every one sharing the title
   "临时工作区" — the sidebar rows are now telling apart at a glance.
