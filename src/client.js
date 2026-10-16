@@ -27,6 +27,12 @@
 const react = require('react')
 const reactDOMClient = require('react-dom/client')
 
+// The shared icon set (react-icons wrappers). Requiring it is best-effort: if a
+// deployment's boot graph does not expose the primitives module the section
+// still renders, using the inline SVG fallbacks declared below.
+let primitives = null
+try { primitives = require('@deepseek-ai/dsh-client-ui-primitives') } catch { primitives = null }
+
 const SETTINGS_NS = 'dsh-temp-workspace'
 
 const ICON_SVG =
@@ -43,17 +49,50 @@ const KEEP_SVG =
   '<path d="M12 13v9" />' +
   '</svg>'
 
+// Inline fallbacks for the icons the "临时工作区" section mirrors from the
+// native Workspace browser. Each one is only used when the shared icon set is
+// unavailable.
+const PLUS_SVG =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:block;flex:none">' +
+  '<path d="M12 5v14M5 12h14" />' +
+  '</svg>'
+const TRASH_SVG =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;flex:none">' +
+  '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />' +
+  '</svg>'
+const FOLDER_SVG =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:block;flex:none">' +
+  '<path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h5l2 2.5h8A1.5 1.5 0 0 1 21 10v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18V7.5Z" />' +
+  '</svg>'
+const CHEVRON_SVG =
+  '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="display:block;flex:none">' +
+  '<path d="M8 4l9 8-9 8V4Z" />' +
+  '</svg>'
+
 const ICON_CLASS = 'dsh-temp-workspace-icon'
 const BUTTON_CLASS = 'dsh-temp-workspace-button'
 const ADD_LABELS = ['Add workspace', '添加工作区']
+const SECTION_CLASS = 'dsh-temp-workspace-section'
+const SECTION_ROW_HIDDEN = 'dshTempHidden'
 
-// Required cordis services: the browser workspace runtime (to open a New
-// Session in the created workspace), the slot registry (for the settings
-// card), and the locale seat (bilingual copy).
-const inject = ['workspaces', 'slots', 'locale']
+// Required cordis services:
+//   - `slots`      — the settings card seat;
+//   - `locale`     — bilingual copy;
+//   - `workspaces` — the Workspace *controller* (the live Workspace list and
+//                    its `sessionIds`, plus `delete` for the cleanup hook);
+//   - `uiWorkspace`— the Workspace *navigation* facade (`startSession`,
+//                    `openSession`, `pickDirectory`). This used to be assumed
+//                    on `workspaces`, where those methods do not exist, so the
+//                    "open a conversation" step of creating a temp workspace
+//                    silently failed;
+//   - `sessions`   — Session summaries (title + updatedAt) for the rows of the
+//                    section's own tree.
+const inject = ['workspaces', 'slots', 'locale', 'uiWorkspace', 'sessions']
 
 function apply(ctx) {
   const workspaces = ctx.get ? ctx.get('workspaces') : ctx.workspaces
+  const uiWorkspace = ctx.get ? ctx.get('uiWorkspace') : ctx.uiWorkspace
+  const sessions = ctx.get ? ctx.get('sessions') : ctx.sessions
   const slots = ctx.get ? ctx.get('slots') : ctx.slots
   const locale = ctx.get ? ctx.get('locale') : ctx.locale
 
@@ -68,7 +107,9 @@ function apply(ctx) {
       const off = locale.subscribe(() => {
         syncLocale()
         insertIcon()
-        injectRowButtons(true)
+        mountSection()
+        hideNativeTempRows()
+        void refreshTempEntries(true)
       })
       return () => { if (off) off() }
     }, 'dsh-temp-workspace: locale sync')
@@ -81,6 +122,7 @@ function apply(ctx) {
   let inserting = false
   let scheduled = null
 
+  // ── create a temp workspace (and open a conversation in it) ──────────────
   async function createTempWorkspace() {
     try {
       const res = await fetch('/temp-workspace/api/create', {
@@ -96,13 +138,65 @@ function apply(ctx) {
       if (workspace === undefined || workspace === null) {
         throw new Error('create returned no workspace')
       }
-      if (workspaces && typeof workspaces.refresh === 'function') {
-        await workspaces.refresh()
-      }
-      if (workspaces) workspaces.startSession(workspace.workspaceId)
+      await refreshTempEntries()
+      await openNewSession(workspace.workspaceId)
+      return workspace
     } catch (error) {
       console.error('[temp-workspace] create failed', error)
+      return null
     }
+  }
+
+  /**
+   * Open a fresh conversation in `workspaceId` through the navigation facade.
+   * The Workspace list reaches the browser as a live stream, so a workspace
+   * created a moment ago may not be projected yet; wait briefly for it rather
+   * than letting `startSession` reject an unknown id.
+   */
+  async function openNewSession(workspaceId) {
+    if (!uiWorkspace || typeof uiWorkspace.startSession !== 'function') {
+      console.warn('[temp-workspace] uiWorkspace.startSession is unavailable; open the workspace from the sidebar')
+      return false
+    }
+    await waitForWorkspace(workspaceId, 5000)
+    try {
+      uiWorkspace.startSession(workspaceId)
+      return true
+    } catch (error) {
+      console.error('[temp-workspace] startSession failed', error)
+      return false
+    }
+  }
+
+  /** Open an existing conversation by id (the section's session rows). */
+  function openSession(sessionId) {
+    if (!uiWorkspace || typeof uiWorkspace.openSession !== 'function') return false
+    try {
+      uiWorkspace.openSession(sessionId)
+      return true
+    } catch (error) {
+      console.error('[temp-workspace] openSession failed', error)
+      return false
+    }
+  }
+
+  /** Poll the live Workspace projection until `workspaceId` shows up. */
+  async function waitForWorkspace(workspaceId, timeoutMs) {
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      if (workspaceView(workspaceId) !== undefined) return true
+      if (Date.now() >= deadline) return false
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  }
+
+  /** The live Workspace projection row for `workspaceId`, when available. */
+  function workspaceView(workspaceId) {
+    try {
+      const snapshot = workspaces && workspaces.list && workspaces.list.getSnapshot()
+      const items = snapshot && Array.isArray(snapshot.items) ? snapshot.items : []
+      return items.find((item) => item && item.workspaceId === workspaceId)
+    } catch { return undefined }
   }
 
   // ── native-delete hook (client half) ─────────────────────────────────────
@@ -197,89 +291,373 @@ function apply(ctx) {
     }
   }
 
-  // ── per-row "permanent keep" button in temp workspace rows ────────────────
-  // A temp workspace renders as a normal workspace row (title "临时工作区") with
-  // a "+" (New Session) button in its hover actions. We inject a small permanent-
-  // keep button next to that "+" so the user can move a temp folder out of the
-  // temp area without going through the boot dialog. Temp workspaces share the
-  // title "临时工作区", which is how their rows are matched.
-  let tempEntries = [] // [{ workspaceId, path }] from /list, cached
-  let rowEntriesFetchedAt = 0
+  // ── the plugin's own "临时工作区" sidebar section ────────────────────────────
+  // DSH declares no slot for a second section beside 工作区 — `sidebar.workspaces`
+  // is one hole owned by the native browser — so this plugin renders its own
+  // copy of that section into a private react-dom root and anchors it into the
+  // sidebar's flex region, directly below the native browser (the technique
+  // dsh-ssh uses for its "远端" section). The native rows of temp workspaces are
+  // *hidden*, never moved: React keeps reconciling the native tree exactly as
+  // before, and our copy owns the visible rows.
+  let tempEntries = []
+  const tempListeners = new Set()
+  let tempFetchedAt = 0
+
+  function setTempEntries(next) {
+    // Skip the notification when nothing actually changed: every observer tick
+    // polls the list, and a no-op re-render would keep the observer busy.
+    const unchanged = next.length === tempEntries.length && next.every((entry, index) => {
+      const previous = tempEntries[index]
+      return previous !== undefined
+        && previous.workspaceId === entry.workspaceId
+        && previous.title === entry.title
+        && previous.sessionIds.length === entry.sessionIds.length
+        && previous.sessionIds.every((id, position) => id === entry.sessionIds[position])
+    })
+    if (unchanged) return
+    tempEntries = next
+    for (const listener of tempListeners) { try { listener() } catch { /* noop */ } }
+  }
+
+  function subscribeTemp(listener) {
+    tempListeners.add(listener)
+    return () => { tempListeners.delete(listener) }
+  }
+
+  function getTempEntries() { return tempEntries }
 
   async function fetchTempEntries() {
+    tempFetchedAt = Date.now()
     try {
       const res = await fetch('/temp-workspace/api/list', { method: 'GET' })
       const parsed = (await res.json().catch(() => null)) || {}
       const value = unwrapValue(parsed)
       if (res.ok && parsed.ok === true && value && Array.isArray(value.entries)) {
-        tempEntries = value.entries.map((e) => ({ workspaceId: e.workspaceId, path: e.path }))
+        setTempEntries(value.entries
+          .filter((entry) => entry && typeof entry.workspaceId === 'string')
+          .map((entry) => ({
+            workspaceId: entry.workspaceId,
+            path: entry.path,
+            title: typeof entry.title === 'string' ? entry.title : undefined,
+            sessionIds: Array.isArray(entry.sessionIds) ? entry.sessionIds : [],
+            createdAt: entry.createdAt,
+          })))
       }
-    } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
   }
 
-  function injectRowButtons(force) {
-    // Refresh temp entries occasionally (or immediately when forced, e.g. on a
-    // locale switch) so newly created temp workspaces / re-renders are caught.
-    if (force || Date.now() - rowEntriesFetchedAt > 5000) {
-      rowEntriesFetchedAt = Date.now()
-      void fetchTempEntries()
+  /** Refresh the cached temp entries, throttled unless `force`. */
+  function refreshTempEntries(force) {
+    if (force !== true && Date.now() - tempFetchedAt < 3000) return Promise.resolve()
+    return fetchTempEntries()
+  }
+
+  // ── tiny external snapshots the section subscribes to ─────────────────────
+  // A stable empty snapshot keeps `useSyncExternalStore` from re-rendering in a
+  // loop when a service (or its `list` store) is unavailable.
+  const EMPTY_SNAPSHOT = Object.freeze({ items: [], ids: [], byId: {}, archivedSessionIds: [] })
+
+  function serviceSnapshot(service) {
+    try {
+      const store = service && service.list
+      const snapshot = store && typeof store.getSnapshot === 'function' ? store.getSnapshot() : null
+      return snapshot && typeof snapshot === 'object' ? snapshot : EMPTY_SNAPSHOT
+    } catch { return EMPTY_SNAPSHOT }
+  }
+
+  function useServiceSnapshot(service) {
+    const subscribe = react.useCallback((listener) => {
+      const store = service && service.list
+      if (!store || typeof store.subscribe !== 'function') return () => {}
+      const off = store.subscribe(listener)
+      return typeof off === 'function' ? off : () => {}
+    }, [service])
+    const read = react.useCallback(() => serviceSnapshot(service), [service])
+    return react.useSyncExternalStore(subscribe, read, read)
+  }
+
+  /** The shared icon set's component when available, else the inline fallback. */
+  function dswIcon(name, size, fallbackSvg) {
+    const Component = primitives !== null ? primitives[name] : null
+    if (typeof Component === 'function') return react.createElement(Component, { size })
+    return react.createElement('span', {
+      'aria-hidden': 'true',
+      style: { display: 'inline-flex' },
+      dangerouslySetInnerHTML: { __html: fallbackSvg },
+    })
+  }
+
+  /** The conversation the native tree currently marks selected (kept in sync). */
+  function currentNativeSessionId() {
+    const node = document.querySelector('[data-row-key^="session:"][aria-selected="true"]')
+    const key = node !== null ? node.getAttribute('data-row-key') : null
+    return typeof key === 'string' && key.startsWith('session:') ? key.slice('session:'.length) : null
+  }
+
+  function updatedAtOf(summary) {
+    if (!summary) return 0
+    const value = summary.updatedAt
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+    if (typeof value === 'string') {
+      const parsed = Date.parse(value)
+      return Number.isFinite(parsed) ? parsed : 0
     }
-    if (tempEntries.length === 0) return
-    // All temp workspaces share the title "临时工作区", so the temp-titled rows
-    // correspond 1:1 (in registry/DOM order) to the marker entries. Inject the
-    // permanent-keep button next to each temp row's New Session (+).
-    const keepTitle = localeText('keepTitle', 'Keep permanently (move out of temp)')
-    const keepAria = localeText('keepAria', 'Keep permanently')
-    const rows = document.querySelectorAll('[role="treeitem"]')
-    const tempRows = []
-    for (const row of rows) {
-      // A workspace row's own title lives in its projectText block; a session
-      // row's title is also classed "title", so scope to the project text.
-      const projText = row.querySelector('[class*="projectText"]')
-      const titleEl = projText !== null ? projText.querySelector('[class*="title"]') : null
-      const title = titleEl !== null ? (titleEl.textContent || '').trim() : ''
-      if (title === '临时工作区') tempRows.push(row)
+    return 0
+  }
+
+  /** Compact relative time for a session row ("刚刚" / "3 分钟前" / "昨天"). */
+  function relativeTime(value) {
+    const ms = typeof value === 'number' ? value : (typeof value === 'string' ? Date.parse(value) : NaN)
+    if (!Number.isFinite(ms) || ms <= 0) return ''
+    const diff = Date.now() - ms
+    if (diff < 60000) return localeText('timeNow', 'just now')
+    if (diff < 3600000) return localeText('timeMinutes', '{n}m', { n: Math.floor(diff / 60000) })
+    if (diff < 86400000) return localeText('timeHours', '{n}h', { n: Math.floor(diff / 3600000) })
+    const days = Math.floor(diff / 86400000)
+    if (days === 1) return localeText('timeYesterday', 'yesterday')
+    if (days < 30) return localeText('timeDays', '{n}d', { n: days })
+    const date = new Date(ms)
+    const pad = (n) => String(n).padStart(2, '0')
+    return `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  }
+
+  /** Persisted collapsed state of the group row (survives a page refresh). */
+  const GROUP_COLLAPSED_KEY = 'dsh-temp-workspace.group-collapsed'
+
+  function readGroupCollapsed() {
+    try { return window.localStorage.getItem(GROUP_COLLAPSED_KEY) === '1' } catch { return false }
+  }
+
+  function writeGroupCollapsed(value) {
+    try { window.localStorage.setItem(GROUP_COLLAPSED_KEY, value ? '1' : '0') } catch { /* noop */ }
+  }
+
+  /**
+   * The collapsible "临时工作区" group: one row in the native Workspace list that
+   * expands into every temporary workspace, each of which expands into its own
+   * conversations. It renders as a single subtree appended to the native tree,
+   * so it scrolls with the list it belongs to and reads as a second-level group
+   * of that tree rather than as a second copy of the whole "工作区" section.
+   * @returns the group element.
+   */
+  function TempWorkspaceGroup() {
+    const workspaceSnapshot = useServiceSnapshot(workspaces)
+    const sessionSnapshot = useServiceSnapshot(sessions)
+    const entries = react.useSyncExternalStore(subscribeTemp, getTempEntries, getTempEntries)
+    const [collapsed, setCollapsed] = react.useState({})
+    const [groupCollapsed, setGroupCollapsed] = react.useState(readGroupCollapsed)
+    const [busy, setBusy] = react.useState(false)
+
+    const workspaceItems = Array.isArray(workspaceSnapshot.items) ? workspaceSnapshot.items : []
+    const summaries = sessionSnapshot && typeof sessionSnapshot.byId === 'object' && sessionSnapshot.byId !== null
+      ? sessionSnapshot.byId
+      : {}
+    const archived = new Set(Array.isArray(workspaceSnapshot.archivedSessionIds) ? workspaceSnapshot.archivedSessionIds : [])
+    const selectedId = currentNativeSessionId()
+
+    const run = (action) => {
+      setBusy(true)
+      Promise.resolve()
+        .then(action)
+        .catch((error) => console.error('[temp-workspace] group action failed', error))
+        .then(() => { setBusy(false); void refreshTempEntries(true) })
     }
-    for (let i = 0; i < tempRows.length && i < tempEntries.length; i += 1) {
-      const row = tempRows[i]
-      const entry = tempEntries[i]
-      const actions = row.querySelector('[class*="rowActions"]')
-      if (actions === null) continue
-      const existing = actions.querySelector('.dsh-temp-workspace-keep')
-      if (existing !== null) {
-        // Locale changed: refresh the existing button's accessible text.
-        existing.setAttribute('aria-label', keepAria)
-        existing.setAttribute('title', keepTitle)
-        continue
+
+    const toggleGroup = () => setGroupCollapsed((current) => {
+      writeGroupCollapsed(!current)
+      return !current
+    })
+
+    const renderSession = (id, summary) => {
+      const rawTitle = summary && typeof summary.title === 'string' ? summary.title.trim() : ''
+      const blank = (summary && summary.blank === true) || rawTitle === ''
+      const title = blank ? localeText('untitledSession', 'New session') : rawTitle
+      const isSelected = id === selectedId
+      const isArchived = archived.has(id)
+      return react.createElement('div', {
+        key: id,
+        className: 'dtw-sessionRow' + (isSelected ? ' dtw-selected' : '') + (isArchived ? ' dtw-archived' : ''),
+        role: 'treeitem',
+        'aria-selected': isSelected,
+        title,
+        onClick: () => { openSession(id) },
+      },
+        react.createElement('span', { className: 'dtw-slot' }),
+        react.createElement('span', { className: 'dtw-title' }, title),
+        react.createElement('span', { className: 'dtw-time' }, relativeTime(summary ? summary.updatedAt : undefined)))
+    }
+
+    /** One temp workspace row plus the conversations nested under it. */
+    const renderWorkspace = (entry) => {
+      const view = workspaceItems.find((item) => item && item.workspaceId === entry.workspaceId)
+      const title = (view && view.title) || entry.title || localeText('name', 'Temporary Workspace')
+      const seen = new Set()
+      const ids = []
+      for (const id of [
+        ...(view && Array.isArray(view.sessionIds) ? view.sessionIds : []),
+        ...entry.sessionIds,
+      ]) {
+        if (typeof id === 'string' && !seen.has(id)) { seen.add(id); ids.push(id) }
       }
-      const plus = row.querySelector('button[aria-label*="新建会话"], button[aria-label*="New session"]') || row.querySelector('button')
-      const btn = document.createElement('button')
-      btn.type = 'button'
-      btn.className = 'dsh-temp-workspace-keep'
-      btn.setAttribute('aria-label', keepAria)
-      btn.setAttribute('title', keepTitle)
-      btn.innerHTML = KEEP_SVG
-      btn.addEventListener('click', (event) => {
-        event.preventDefault()
-        event.stopPropagation()
-        void doPermanentKeep(entry.workspaceId)
-      })
-      const dims = plus ? plus.getBoundingClientRect() : null
-      const size = Math.max(dims ? dims.width : 16, dims ? dims.height : 16) || 16
-      btn.style.width = size + 'px'
-      btn.style.height = size + 'px'
-      btn.style.display = 'inline-flex'
-      btn.style.alignItems = 'center'
-      btn.style.justifyContent = 'center'
-      btn.style.flex = 'none'
-      btn.style.padding = '0'
-      btn.style.border = 'none'
-      btn.style.background = 'transparent'
-      btn.style.color = 'inherit'
-      btn.style.cursor = 'pointer'
-      btn.style.borderRadius = '4px'
-      btn.style.marginLeft = '2px'
-      actions.appendChild(btn)
+      ids.sort((a, b) => updatedAtOf(summaries[b]) - updatedAtOf(summaries[a]))
+      const expanded = collapsed[entry.workspaceId] !== true
+      const keepTitle = localeText('keepTitle', 'Keep permanently (move out of temp)')
+      return react.createElement('div', { className: 'dtw-group', key: entry.workspaceId },
+        react.createElement('div', {
+          className: 'dtw-projectRow',
+          role: 'treeitem',
+          'aria-expanded': expanded,
+          'aria-label': title,
+          title,
+          onClick: () => setCollapsed((current) => ({ ...current, [entry.workspaceId]: current[entry.workspaceId] !== true })),
+        },
+          react.createElement('span', { className: 'dtw-slot dtw-folder', 'aria-hidden': 'true' }, dswIcon('IconFolderOpenRegular', 16, FOLDER_SVG)),
+          react.createElement('span', { className: 'dtw-slot dtw-chevron', 'aria-hidden': 'true' }, dswIcon('IconTriangleRightFillRegular', 12, CHEVRON_SVG)),
+          react.createElement('span', { className: 'dtw-projectText' },
+            react.createElement('span', { className: 'dtw-title' }, title)),
+          react.createElement('span', { className: 'dtw-rowActions', onClick: (event) => event.stopPropagation() },
+            react.createElement('button', {
+              type: 'button',
+              className: 'dtw-iconButton',
+              disabled: busy,
+              title: keepTitle,
+              'aria-label': localeText('keepAria', 'Keep permanently'),
+              onClick: () => run(() => doPermanentKeep(entry.workspaceId)),
+            }, dswIcon('IconBookmarkOutlineRegular', 16, KEEP_SVG)),
+            react.createElement('button', {
+              type: 'button',
+              className: 'dtw-iconButton',
+              disabled: busy,
+              title: localeText('newSession', 'New session'),
+              'aria-label': localeText('newSession', 'New session'),
+              onClick: () => run(() => openNewSession(entry.workspaceId)),
+            }, dswIcon('IconNewChatOutlineRegular', 16, PLUS_SVG)),
+            react.createElement('button', {
+              type: 'button',
+              className: 'dtw-iconButton dtw-danger',
+              disabled: busy,
+              title: localeText('deleteTempWorkspace', 'Delete temporary workspace'),
+              'aria-label': localeText('deleteTempWorkspace', 'Delete temporary workspace'),
+              onClick: () => run(async () => {
+                await post('/temp-workspace/api/delete', { workspaceId: entry.workspaceId })
+                await fetchTempEntries()
+              }),
+            }, dswIcon('IconDeleteOutlineRegular', 16, TRASH_SVG)))),
+        expanded ? react.createElement('div', { className: 'dtw-children', role: 'group' },
+          ids.map((id) => renderSession(id, summaries[id]))) : null)
+    }
+
+    return react.createElement('div', { className: 'dtw-groupNode' },
+      react.createElement('div', {
+        className: 'dtw-groupRow',
+        role: 'treeitem',
+        'aria-expanded': !groupCollapsed,
+        'aria-label': localeText('sectionLabel', 'Temporary workspaces'),
+        title: localeText('sectionLabel', 'Temporary workspaces'),
+        onClick: toggleGroup,
+      },
+        react.createElement('span', {
+          className: 'dtw-slot dtw-caret' + (groupCollapsed ? '' : ' dtw-caretOpen'),
+          'aria-hidden': 'true',
+        }, dswIcon('IconTriangleRightFillRegular', 12, CHEVRON_SVG)),
+        react.createElement('span', { className: 'dtw-slot', 'aria-hidden': 'true' }, dswIcon('IconFolderOpenRegular', 16, FOLDER_SVG)),
+        react.createElement('span', { className: 'dtw-groupTitle' }, localeText('sectionLabel', 'Temporary workspaces')),
+        react.createElement('span', { className: 'dtw-groupCount' }, String(entries.length)),
+        react.createElement('span', { className: 'dtw-rowActions', onClick: (event) => event.stopPropagation() },
+          react.createElement('button', {
+            type: 'button',
+            className: 'dtw-iconButton',
+            disabled: busy,
+            title: localeText('newTempWorkspace', 'New temporary workspace'),
+            'aria-label': localeText('newTempWorkspace', 'New temporary workspace'),
+            onClick: () => run(createTempWorkspace),
+          }, dswIcon('IconAddOutlineRegular', 16, PLUS_SVG)))),
+      groupCollapsed ? null : react.createElement('div', { className: 'dtw-groupBody', role: 'group' },
+        entries.map(renderWorkspace)))
+  }
+
+  let sectionHost = null
+  let sectionRoot = null
+
+  /** Mount the group once and keep it as the last row of the native tree. */
+  function mountSection() {
+    if (sectionRoot === null) {
+      sectionHost = document.createElement('div')
+      sectionHost.className = SECTION_CLASS
+      sectionRoot = reactDOMClient.createRoot(sectionHost)
+      sectionRoot.render(react.createElement(TempWorkspaceGroup))
+    }
+    anchorSection()
+    syncSectionVisibility()
+  }
+
+  /**
+   * Keep the group as the last row of the native Workspace tree. React appends
+   * its own rows there and never references a node it did not create, so an
+   * extra trailing child is inert to its reconciliation.
+   */
+  function anchorSection() {
+    const tree = findWorkspaceTree()
+    if (tree === null) {
+      // The Workspace tree is not mounted (search results, another panel): detach
+      // rather than let the group show up inside an unrelated tree.
+      if (sectionHost.parentElement !== null) sectionHost.remove()
+      return
+    }
+    if (sectionHost.parentElement !== tree || tree.lastElementChild !== sectionHost) {
+      tree.appendChild(sectionHost)
+    }
+  }
+
+  /**
+   * The native tree that lists Workspaces. Identified by its own row keys so the
+   * flat search-result tree is never mistaken for it.
+   * @returns the tree element, or null when it is not mounted.
+   */
+  function findWorkspaceTree() {
+    let emptyTree = null
+    for (const tree of document.querySelectorAll('[role="tree"]')) {
+      if (tree.querySelector('[data-row-key^="workspace:"]') !== null) return tree
+      if (emptyTree === null && tree.querySelector('[data-row-key="empty"]') !== null) emptyTree = tree
+    }
+    return emptyTree
+  }
+
+  /** Hide the group row entirely while no temp workspace exists. */
+  function syncSectionVisibility() {
+    if (sectionHost === null) return
+    const next = tempEntries.length === 0 ? 'none' : ''
+    if (sectionHost.style.display !== next) sectionHost.style.display = next
+  }
+
+  /**
+   * Hide the native rows of every temp workspace (the group row and each of its
+   * conversation rows) so they appear only under the plugin's own section.
+   * Rows are never removed or moved, so React's reconciliation is untouched.
+   */
+  function hideNativeTempRows() {
+    const workspaceIds = new Set()
+    const sessionIds = new Set()
+    for (const entry of tempEntries) {
+      workspaceIds.add(entry.workspaceId)
+      const view = workspaceView(entry.workspaceId)
+      const ids = view && Array.isArray(view.sessionIds) ? view.sessionIds : entry.sessionIds
+      for (const id of ids) sessionIds.add(id)
+    }
+    for (const element of document.querySelectorAll('[data-row-key]')) {
+      const key = element.getAttribute('data-row-key') || ''
+      const hide = key.startsWith('workspace:')
+        ? workspaceIds.has(key.slice('workspace:'.length))
+        : key.startsWith('session:')
+          ? sessionIds.has(key.slice('session:'.length))
+          : false
+      if (hide) {
+        if (element.style.display !== 'none') element.style.display = 'none'
+        if (element.dataset[SECTION_ROW_HIDDEN] !== '1') element.dataset[SECTION_ROW_HIDDEN] = '1'
+      } else if (element.dataset[SECTION_ROW_HIDDEN] === '1') {
+        element.style.display = ''
+        delete element.dataset[SECTION_ROW_HIDDEN]
+      }
     }
   }
 
@@ -288,17 +666,23 @@ function apply(ctx) {
     scheduled = requestAnimationFrame(() => {
       scheduled = null
       insertIcon()
-      injectRowButtons()
+      mountSection()
+      hideNativeTempRows()
+      void refreshTempEntries()
     })
   }
 
   const observer = new MutationObserver(schedule)
   observer.observe(document.body, { childList: true, subtree: true })
   insertIcon()
+  mountSection()
 
-  // Fetch temp entries and inject row buttons once on boot (and refresh via the
-  // observer/5s debounce once the sidebar re-renders).
-  void fetchTempEntries().then(() => injectRowButtons())
+  // Fetch the temp entries once on boot; every later render refreshes them
+  // through the throttled observer tick.
+  void fetchTempEntries().then(() => {
+    mountSection()
+    hideNativeTempRows()
+  })
 
   // ── boot confirm popup ───────────────────────────────────────────────────
   // Ask the host once whether any temp workspace is held for confirmation. If
@@ -344,7 +728,9 @@ function apply(ctx) {
   function renderConfirm(value) {
     const count = value?.pendingCount ?? value?.pending?.length ?? 0
     const names = (value?.pending ?? [])
-      .map((p) => (p.path ? String(p.path).split(/[/\\]/).filter(Boolean).pop() : p.workspaceId))
+      .map((p) => (typeof p.title === 'string' && p.title !== ''
+        ? p.title
+        : (p.path ? String(p.path).split(/[/\\]/).filter(Boolean).pop() : p.workspaceId)))
       .filter(Boolean)
 
     const body = names.length > 0
@@ -368,12 +754,15 @@ function apply(ctx) {
   // Permanent keep for one temp workspace: pick the destination folder, then ask
   // the host to move that workspace's files in and de-temp it.
   const doPermanentKeep = async (workspaceId) => {
-    if (!workspaces || typeof workspaces.pickDirectory !== 'function') {
+    const picker = uiWorkspace && typeof uiWorkspace.pickDirectory === 'function'
+      ? uiWorkspace
+      : (workspaces && typeof workspaces.pickDirectory === 'function' ? workspaces : null)
+    if (picker === null) {
       console.error('[temp-workspace] pickDirectory unavailable')
       return
     }
     try {
-      const target = await workspaces.pickDirectory()
+      const target = await picker.pickDirectory()
       if (target === null || target === undefined || target === '') return
       const payload = workspaceId !== undefined ? { target, workspaceId } : { target }
       const ok = await post('/temp-workspace/api/permanentKeep', payload)
@@ -577,6 +966,21 @@ function apply(ctx) {
     for (const dispose of disposers) { try { dispose() } catch { /* noop */ } }
     const node = document.querySelector('.' + BUTTON_CLASS)
     if (node !== null) node.remove()
+    if (sectionRoot !== null) {
+      try { sectionRoot.unmount() } catch { /* noop */ }
+      sectionRoot = null
+    }
+    if (sectionHost !== null) {
+      sectionHost.remove()
+      sectionHost = null
+    }
+    // Un-hide anything we hid in the native tree, so a plugin reload leaves the
+    // sidebar exactly as it found it.
+    for (const element of document.querySelectorAll('[data-dsh-temp-hidden="1"]')) {
+      element.style.display = ''
+      delete element.dataset[SECTION_ROW_HIDDEN]
+    }
+    tempListeners.clear()
   }
 }
 
@@ -704,6 +1108,41 @@ function injectStyle() {
     '.dsh-temp-workspace-btn:hover:not(:disabled){color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
     '.dsh-temp-workspace-btn:disabled{opacity:.45;cursor:default}',
     '.dsh-temp-workspace-status{color:var(--dsw-alias-label-secondary);font-size:11px}',
+    // ── the collapsible "临时工作区" group inside the native tree ─────────────
+    // Mirrors the native Workspace browser's own module CSS (same tokens, same
+    // metrics), under the `dtw-` prefix so it never collides with the shell.
+    // Indent levels: group row 8px, temp workspace 24px, conversation 40px.
+    '.dsh-temp-workspace-section{box-sizing:border-box;display:block}',
+    '.dtw-groupRow,.dtw-projectRow,.dtw-sessionRow{box-sizing:border-box;border-radius:var(--dsw-radius-md);padding:0 8px;cursor:pointer;user-select:none;color:var(--dsw-alias-label-primary);align-items:center;gap:6px;display:flex}',
+    '.dtw-groupRow:hover,.dtw-projectRow:hover,.dtw-sessionRow:hover,.dtw-sessionRow.dtw-selected{background:var(--dsw-alias-interactive-bg-hover)}',
+    '.dtw-groupRow{height:34px}',
+    '.dtw-projectRow{height:34px;padding-inline-start:24px}',
+    '.dtw-sessionRow{gap:0;height:32px;padding-inline-start:40px}',
+    '.dtw-groupRow+.dtw-groupBody,.dtw-groupBody>*+*,.dtw-children>*+*{margin-top:2px}',
+    '.dtw-groupBody{padding-bottom:2px}',
+    '.dtw-groupNode+.dtw-groupNode{margin-top:2px}',
+    '.dtw-groupTitle{text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;font-size:14px;line-height:20px;overflow:hidden}',
+    '.dtw-groupCount{color:var(--dsw-alias-label-tertiary);flex:none;font-size:11px;line-height:16px;padding:0 4px;border-radius:var(--dsw-radius-xs,4px);background:var(--dsw-alias-interactive-bg-hover)}',
+    '.dtw-slot{width:16px;height:20px;color:var(--dsw-alias-label-tertiary);flex:none;justify-content:center;align-items:center;display:inline-flex}',
+    '.dtw-caret{width:12px;transition:transform .15s var(--ds-ease-in-out, ease)}',
+    '.dtw-caretOpen{transform:rotate(90deg)}',
+    '.dtw-chevron{display:none}',
+    '.dtw-projectRow:hover .dtw-chevron{display:inline-flex}',
+    '.dtw-projectRow:hover .dtw-folder{display:none}',
+    '.dtw-projectText{flex-direction:column;flex:1;gap:2px;min-width:0;display:flex}',
+    '.dtw-title{text-overflow:ellipsis;white-space:nowrap;min-width:0;font-size:14px;line-height:20px;overflow:hidden}',
+    '.dtw-sessionRow .dtw-title{margin:0 6px 0 4px;flex:1}',
+    '.dtw-sessionRow .dtw-time{color:var(--dsw-alias-label-tertiary);flex:none;font-size:10px;line-height:16px}',
+    '.dtw-sessionRow:hover .dtw-time{display:none}',
+    '.dtw-sessionRow.dtw-archived .dtw-title{color:var(--dsw-alias-label-caption)}',
+    '.dtw-rowActions{flex:none;align-items:center;gap:8px;display:none}',
+    '.dtw-groupRow:hover .dtw-rowActions,.dtw-groupRow:focus-within .dtw-rowActions,.dtw-projectRow:hover .dtw-rowActions{display:inline-flex}',
+    '.dtw-groupRow .dtw-rowActions{height:20px}',
+    '.dtw-iconButton{border-radius:var(--dsw-radius-sm);cursor:pointer;width:24px;height:24px;color:var(--dsw-alias-label-secondary);background:0 0;border:none;flex:none;justify-content:center;align-items:center;padding:0;display:inline-flex}',
+    '.dtw-iconButton:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+    '.dtw-iconButton:disabled{opacity:.45;cursor:default}',
+    '.dtw-iconButton.dtw-danger:hover:not(:disabled){color:var(--dsw-alias-state-error-primary)}',
+    '.dtw-iconButton:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-2px}',
   ].join('')
   document.head.appendChild(style)
 }
@@ -762,6 +1201,16 @@ const zhLocale = {
   iconTitle: '临时工作区',
   keepTitle: '永久保留（移出临时区）',
   keepAria: '永久保留',
+  sectionLabel: '临时工作区',
+  newTempWorkspace: '新建临时工作区',
+  newSession: '新建会话',
+  deleteTempWorkspace: '删除临时工作区',
+  untitledSession: '新会话',
+  timeNow: '刚刚',
+  timeMinutes: '{n} 分钟前',
+  timeHours: '{n} 小时前',
+  timeYesterday: '昨天',
+  timeDays: '{n} 天前',
 }
 
 const enLocale = {
@@ -792,6 +1241,16 @@ const enLocale = {
   iconTitle: 'Temporary workspace',
   keepTitle: 'Keep permanently (move out of temp)',
   keepAria: 'Keep permanently',
+  sectionLabel: 'Temporary workspaces',
+  newTempWorkspace: 'New temporary workspace',
+  newSession: 'New session',
+  deleteTempWorkspace: 'Delete temporary workspace',
+  untitledSession: 'New session',
+  timeNow: 'just now',
+  timeMinutes: '{n}m ago',
+  timeHours: '{n}h ago',
+  timeYesterday: 'yesterday',
+  timeDays: '{n}d ago',
 }
 
 // ── inline CSS (class strings for the card, keyed off the sidebars' css vars) ──

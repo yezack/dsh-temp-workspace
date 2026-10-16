@@ -5,9 +5,12 @@ A DSH web **client plugin** that adds a **temporary workspace**.
 > [中文说明](README.zh.md)
 
 Click the small hourglass icon beside the sidebar's "Add workspace" (+) button
-to create a throwaway workspace and open a fresh conversation in it. On the
-next Harness restart this plugin **deletes the conversations** under that
-workspace **and the workspace itself** — the temp workspace leaves no trace.
+to create a throwaway workspace — named after the moment you created it
+(`2026-10-16 09:45`) — and open a fresh conversation in it. It shows up inside a
+collapsible **临时工作区** group in the ordinary Workspace list, so temporary
+work never mixes with your real projects. On the next Harness restart this
+plugin **deletes the conversations** under that workspace **and the workspace
+itself** — the temp workspace leaves no trace.
 
 ## What it is
 
@@ -16,10 +19,30 @@ workspace **and the workspace itself** — the temp workspace leaves no trace.
   `settings` and `loader`, registers a browser-trust-fenced
   `/temp-workspace/api` route, and drives the cleanup at boot.
 - **Browser half** (`src/client.js` → `lib/client.js`) — injects a small icon
-  button beside the sidebar "+ Add workspace" button; on click it calls the
-  host route and opens a new Conversation in the created workspace. It also
-  registers a **Settings → Plugins** card and, when the setting is enabled, a
-  confirm dialog at boot.
+  button beside the sidebar "+ Add workspace" button, renders the collapsible
+  **临时工作区** group inside the native Workspace list (fed by this plugin's own
+  route plus the `workspaces` / `uiWorkspace` / `sessions` client services),
+  registers a **Settings → Plugins** card, and shows a confirm dialog at boot
+  when the setting is enabled.
+
+## The 临时工作区 group
+
+```
+工作区
+  📁 some-project
+  ▾ 📁 临时工作区   (2)        ← one collapsible group row
+      📁 2026-10-16 09:45      ← a temp workspace
+          会话 A
+          会话 B
+      📁 2026-10-16 10:12
+          会话 C
+```
+
+- The caret collapses the whole group; the choice is remembered across page
+  reloads (browser-local `localStorage`).
+- Hovering a temp workspace row offers **keep permanently**, **new session** and
+  **delete**; the group row's own **+** creates another temp workspace.
+- Clicking a conversation opens it exactly like a native row.
 
 ## Installation
 
@@ -204,8 +227,8 @@ Reads accept `GET`, mutations `POST`.
 
 | method | returns | notes |
 | --- | --- | --- |
-| `POST create` | `{ workspace, created: true }` | mkdir + `workspaceRegistry.create` + marker |
-| `GET list` | `{ entries }` | `[{ workspaceId, path, createdAt }]` currently marked temporary |
+| `POST create` | `{ workspace, created: true }` | mkdir + `workspaceRegistry.create` (title = `yyyy-MM-dd HH:mm`) + marker |
+| `GET list` | `{ entries }` | `[{ workspaceId, path, title, sessionIds, createdAt }]` currently marked temporary |
 | `POST delete` | `{ ok: true }` | remove one temp workspace now (sessions + registration + dir) |
 | `GET/POST config` | `{ ok, value }` | read the settings, or `POST {…}` to write a patch |
 | `POST configReset` | `{ ok, value }` | restore every setting to its default |
@@ -217,10 +240,16 @@ Reads accept `GET`, mutations `POST`.
 
 ## Notes / limits
 
-- The sidebar workspace browser has **no slot** for a header action, so the
-  icon is injected into the DOM with a `MutationObserver` (same idiom as
-  `dsh-workspace-auto-approval`). If the sidebar layout changes upstream the
-  icon may need a matching placement update.
+- The sidebar workspace browser has **no slot** for a header action and no slot
+  for a synthetic workspace group, so both the icon and the **临时工作区** group
+  are injected into the live DOM with a `MutationObserver` (same idiom as
+  `dsh-workspace-auto-approval`). Temp workspaces' native rows are hidden with
+  `display:none` — never moved, and the plugin's own subtree is only ever
+  appended as the tree's last child, which React never references — so the
+  native tree keeps reconciling untouched. If the sidebar layout changes
+  upstream the icon or the group may need a matching placement update.
+- The native Workspace search can still surface a temp conversation; only the
+  list rows are regrouped.
 - The add-workspace button only renders when the directory-flow hole is
   occupied, so the temp-workspace icon appears only then too.
 - Cleaning removes session log directories directly. **Live** sessions owned by
@@ -235,7 +264,7 @@ Reads accept `GET`, mutations `POST`.
   through its own `react-dom/client` root (no dependency on the primitives'
   CSS-module scope, so it always shows).
 - **Permanent Keep** requires the `native` directory-picker capability
-  (`ctx.workspaces.pickDirectory()`); on a remote/non-native deployment that
+  (`ctx.uiWorkspace.pickDirectory()`); on a remote/non-native deployment that
   picker is unavailable and the button is disabled.
 - Conversation migration rewrites only the **header frame** of each session log
   (a `.jsonl.zstd` file is a concatenation of independently-compressed
@@ -256,8 +285,6 @@ Reads accept `GET`, mutations `POST`.
 - Due to Harness limits, after a permanent keep there is a chance the conversation
   ends up `Ungrouped`. We have done what we can to handle it, but it can still
   occur.
-- After creating a temp workspace, the permanent-keep button may not appear
-  immediately; it will show up after a short while (2–3 s). Not planning to fix.
 - Due to Harness limits, right after a migration the conversation name may take
   the workspace's name; clicking it changes it back. It does not affect use; not
   planning to fix — rename it yourself might help.
