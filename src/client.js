@@ -668,7 +668,6 @@ function apply(ctx) {
       insertIcon()
       mountSection()
       hideNativeTempRows()
-      void refreshTempEntries()
     })
   }
 
@@ -677,8 +676,17 @@ function apply(ctx) {
   insertIcon()
   mountSection()
 
-  // Fetch the temp entries once on boot; every later render refreshes them
-  // through the throttled observer tick.
+  // Poll the temp list on its own timer. A MutationObserver only ticks when the
+  // DOM changes, so a change made out of band (the boot cleanup, another tab,
+  // the host route) would otherwise leave a stale group row behind until the
+  // next render. `setTempEntries` ignores no-op results, so this costs one
+  // local GET per tick and no re-render.
+  ctx.effect(() => {
+    const timer = setInterval(() => { void fetchTempEntries() }, 4000)
+    return () => { clearInterval(timer) }
+  }, 'dsh-temp-workspace: temp list poll')
+
+  // Fetch the temp entries once on boot; the timer above keeps them current.
   void fetchTempEntries().then(() => {
     mountSection()
     hideNativeTempRows()
