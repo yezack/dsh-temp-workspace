@@ -51,6 +51,19 @@ itself** — the temp workspace leaves no trace.
   **delete**; the group row's own **+** creates another temp workspace.
 - Clicking a conversation opens it exactly like a native row.
 
+## Starting a new session
+
+- **`新建会话` opens the blank New Session page** — it does *not* auto-bind a
+  Workspace. By default the sidebar's New Session button (and the `session.new`
+  shortcut) pick the current Session's Workspace, or the most recently active
+  one; this plugin makes that no-argument call clear the main panel instead, so
+  the Workspace is chosen deliberately. An explicit workspace id still behaves
+  natively.
+- That page's control row gains a **`新建临时工作区`** chip beside the native
+  `选择工作区` picker and the agent-preset chip (same metrics: 28px tall, 8px
+  padding, 8px radius, 13px/500). It creates a temp workspace and opens a
+  conversation in it — the same action as the sidebar hourglass.
+
 ## Installation
 
 ### From npm (prebuilt — recommended)
@@ -250,11 +263,14 @@ Reads accept `GET`, mutations `POST`.
 - The sidebar workspace browser has **no slot** for a header action and no slot
   for a synthetic workspace group, so both the icon and the **临时工作区** group
   are injected into the live DOM with a `MutationObserver` (same idiom as
-  `dsh-workspace-auto-approval`). Temp workspaces' native rows are hidden with
-  `display:none` — never moved, and the plugin's own subtree is only ever
-  appended as the tree's last child, which React never references — so the
-  native tree keeps reconciling untouched. If the sidebar layout changes
-  upstream the icon or the group may need a matching placement update.
+  `dsh-workspace-auto-approval`). The blank New Session page's control row is a
+  composition of three *single* slots, so the **`新建临时工作区`** chip is
+  injected there the same way — filling one of those slots would shadow the
+  shipped UI. Temp workspaces' native rows are hidden with `display:none` — never
+  moved, and the plugin's own subtrees are only ever appended as a trailing child,
+  which React never references — so the native trees keep reconciling untouched.
+  If the sidebar or the hero layout changes upstream these placements may need a
+  matching update.
 - The native Workspace search can still surface a temp conversation; only the
   list rows are regrouped.
 - The add-workspace button only renders when the directory-flow hole is

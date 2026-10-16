@@ -2,6 +2,31 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.0] - 2026
+
+### Added
+- **A `新建临时工作区` control on the blank New Session page**, in the hero's
+  control row beside the native `选择工作区` picker and the agent-preset chip
+  (identical metrics: 28px tall, 8px padding, 8px radius, 13px/500 label). It
+  creates a temp workspace and opens a conversation in it — the same action as
+  the sidebar hourglass, now reachable exactly where a new session is started.
+
+### Changed
+- **"New Session" no longer binds a Workspace by itself.** The sidebar's
+  `新建会话` button, the brand row and the `session.new` shortcut all call
+  `uiWorkspace.startSession()` with no workspace, and the shipped policy then
+  auto-bound the new session to the current Session's Workspace or to the most
+  recently active one. That no-argument call now opens the **blank New Session
+  page** instead, so the Workspace — or a fresh temporary one — is chosen
+  deliberately there. A call with an explicit workspace id keeps the original
+  behaviour, which this plugin's own temp-workspace rows rely on.
+
+### Notes
+- The hero's control row is a composition of three *single* slots declared by
+  ui-conversation, so there is no list seat to register a fourth control into
+  (filling one would shadow the shipped UI). The button is therefore appended to
+  the live row, like the sidebar icon and the group.
+
 ## [0.2.0] - 2026
 
 ### Added
