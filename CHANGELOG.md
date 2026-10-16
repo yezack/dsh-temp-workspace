@@ -10,6 +10,11 @@ All notable changes to this project are documented in this file.
   (identical metrics: 28px tall, 8px padding, 8px radius, 13px/500 label). It
   creates a temp workspace and opens a conversation in it — the same action as
   the sidebar hourglass, now reachable exactly where a new session is started.
+- It is **shown only while no Workspace is chosen** for that New Session: once
+  one is picked, the shortcut to a temporary Workspace goes away with the
+  decision. Detection reads the native chip's own state — its `aria-label` is
+  always the "choose workspace" call to action while its visible label becomes
+  the chosen Workspace's title — so no locale string is involved.
 
 ### Changed
 - **"New Session" no longer binds a Workspace by itself.** The sidebar's

@@ -362,11 +362,38 @@ function apply(ctx) {
     return picker === undefined || picker.parentElement === null ? null : picker.parentElement
   }
 
+  /**
+   * Whether that page already has a Workspace chosen. The native chip's
+   * `aria-label` is always its "choose workspace" call to action — selected or
+   * not — while its visible label becomes the chosen Workspace's title, so
+   * comparing the two tells the two states apart without depending on any
+   * locale string.
+   * @returns true once a Workspace has been picked for this New Session.
+   */
+  function heroWorkspaceChosen() {
+    const row = findHeroRow()
+    if (row === null) return false
+    const chip = [...row.querySelectorAll('button')].find(
+      (button) => button.getAttribute('aria-haspopup') !== null,
+    )
+    if (chip === undefined) return false
+    const placeholder = (chip.getAttribute('aria-label') || '').trim()
+    const labelNode = chip.querySelector('[class*="workspaceLabel"]')
+    const text = labelNode !== null ? (labelNode.textContent || '').trim() : ''
+    return text !== '' && text !== placeholder
+  }
+
   function insertHeroButton() {
     const row = findHeroRow()
     if (row === null) return
-    const label = localeText('newTempWorkspace', 'New temporary workspace')
     const existing = row.querySelector('.' + HERO_BUTTON_CLASS)
+    // Once a Workspace is chosen for this New Session there is nothing left to
+    // decide, so the shortcut to a temporary Workspace goes away with it.
+    if (heroWorkspaceChosen()) {
+      if (existing !== null) existing.remove()
+      return
+    }
+    const label = localeText('newTempWorkspace', 'New temporary workspace')
     if (existing !== null) {
       // Locale changed: refresh the existing button's visible and accessible text.
       existing.setAttribute('title', label)

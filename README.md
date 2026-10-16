@@ -63,6 +63,10 @@ itself** — the temp workspace leaves no trace.
   `选择工作区` picker and the agent-preset chip (same metrics: 28px tall, 8px
   padding, 8px radius, 13px/500). It creates a temp workspace and opens a
   conversation in it — the same action as the sidebar hourglass.
+- The chip **disappears once a Workspace is chosen** for that New Session, since
+  the choice has then been made. The state comes from the native chip itself
+  (its `aria-label` stays the "choose workspace" call to action while its visible
+  label becomes the chosen Workspace's title), so no locale string is compared.
 
 ## Installation
 
