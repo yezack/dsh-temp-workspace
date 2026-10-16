@@ -29,7 +29,7 @@ itself** — the temp workspace leaves no trace.
 
 ```
 工作区
-  ▾ 临时工作区   (2)          ← one collapsible group row, first in the list
+  ▤ 临时工作区   (2)          ← one collapsible group row, first in the list
       📁 2026-10-16 09:45      ← a temp workspace
           会话 A
           会话 B
@@ -42,8 +42,11 @@ itself** — the temp workspace leaves no trace.
 - The group is the list's **first** row and is out-dented (`padding-left: 0`), so
   it reads as the parent of the workspace rows below it rather than as one more
   workspace. Its children keep the tree's normal indents (24px / 40px).
-- The caret collapses the whole group; the choice is remembered across page
-  reloads (browser-local `localStorage`).
+- Its single leading icon is **not** the folder glyph the Workspace rows use: a
+  closed tray means collapsed, an opened tray means expanded — one icon carrying
+  both the group's identity and its state, with no separate rotating caret.
+- Clicking the row collapses or expands the whole group; the choice is
+  remembered across page reloads (browser-local `localStorage`).
 - Hovering a temp workspace row offers **keep permanently**, **new session** and
   **delete**; the group row's own **+** creates another temp workspace.
 - Clicking a conversation opens it exactly like a native row.

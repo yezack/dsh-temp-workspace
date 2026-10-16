@@ -10,8 +10,11 @@ All notable changes to this project are documented in this file.
   in one group row of the ordinary "工作区" list instead of mixing into it as
   extra top-level workspaces. The row is pinned **first** in the list and
   out-dented to `padding-left: 0`, so it reads as the parent of the workspace
-  rows below it rather than as one more workspace. It carries a count, a caret
-  that remembers its collapsed state across page reloads, and hover actions for
+  rows below it rather than as one more workspace. Its single leading icon is a
+  **closed tray / opened tray pair** rather than the folder glyph the Workspace
+  rows use — one icon carrying both the group's identity and its expanded or
+  collapsed state, with no separate rotating caret. The row also carries a count,
+  remembers its collapsed state across page reloads, and offers hover actions for
   *new temporary workspace*, *keep permanently*, *new session* and *delete*.
 - `/temp-workspace/api/list` now also reports each entry's registry `title` and
   `sessionIds`; the boot-confirm payload reports `title` too, so the dialog

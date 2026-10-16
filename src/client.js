@@ -68,6 +68,19 @@ const CHEVRON_SVG =
   '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="display:block;flex:none">' +
   '<path d="M8 4l9 8-9 8V4Z" />' +
   '</svg>'
+// The 临时工作区 group's own state pair: a closed tray while collapsed and an
+// opened one while expanded. Used only when the shared icon set is unavailable.
+const TRAY_CLOSED_SVG =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:block;flex:none">' +
+  '<path d="M3 5.5A1.5 1.5 0 0 1 4.5 4h15A1.5 1.5 0 0 1 21 5.5V18a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18V5.5Z" />' +
+  '<path d="M3 10h4l1.5 2.5h7L17 10h4" />' +
+  '</svg>'
+const TRAY_OPEN_SVG =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:block;flex:none">' +
+  '<path d="M3 9.5A1.5 1.5 0 0 1 4.5 8h15A1.5 1.5 0 0 1 21 9.5V18a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18V9.5Z" />' +
+  '<path d="M3 12.5h4l1.5 2.5h7l1.5-2.5h4" />' +
+  '<path d="M12 6.5V1.5M9 4l3-2.5L15 4" />' +
+  '</svg>'
 
 const ICON_CLASS = 'dsh-temp-workspace-icon'
 const BUTTON_CLASS = 'dsh-temp-workspace-button'
@@ -567,11 +580,14 @@ function apply(ctx) {
         title: localeText('sectionLabel', 'Temporary workspaces'),
         onClick: toggleGroup,
       },
-        react.createElement('span', {
-          className: 'dtw-slot dtw-caret' + (groupCollapsed ? '' : ' dtw-caretOpen'),
-          'aria-hidden': 'true',
-        }, dswIcon('IconTriangleRightFillRegular', 12, CHEVRON_SVG)),
-        react.createElement('span', { className: 'dtw-slot', 'aria-hidden': 'true' }, dswIcon('IconFolderOpenRegular', 16, FOLDER_SVG)),
+        // One leading icon carries both the group's identity and its state: a
+        // closed tray while collapsed, an opened one while expanded. Deliberately
+        // not the folder glyph the Workspace rows below use, and no separate
+        // rotating caret.
+        react.createElement('span', { className: 'dtw-slot dtw-stateIcon', 'aria-hidden': 'true' },
+          groupCollapsed
+            ? dswIcon('IconArchiveOutlineRegular', 16, TRAY_CLOSED_SVG)
+            : dswIcon('IconUnarchiveOutlineRegular', 16, TRAY_OPEN_SVG)),
         react.createElement('span', { className: 'dtw-groupTitle' }, localeText('sectionLabel', 'Temporary workspaces')),
         react.createElement('span', { className: 'dtw-groupCount' }, String(entries.length)),
         react.createElement('span', { className: 'dtw-rowActions', onClick: (event) => event.stopPropagation() },
@@ -1157,8 +1173,11 @@ function injectStyle() {
     '.dtw-groupTitle{text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;font-size:14px;line-height:20px;overflow:hidden}',
     '.dtw-groupCount{color:var(--dsw-alias-label-tertiary);flex:none;font-size:11px;line-height:16px;padding:0 4px;border-radius:var(--dsw-radius-xs,4px);background:var(--dsw-alias-interactive-bg-hover)}',
     '.dtw-slot{width:16px;height:20px;color:var(--dsw-alias-label-tertiary);flex:none;justify-content:center;align-items:center;display:inline-flex}',
-    '.dtw-caret{width:12px;transition:transform .15s var(--ds-ease-in-out, ease)}',
-    '.dtw-caretOpen{transform:rotate(90deg)}',
+    // The group's single leading icon is the state indicator (closed tray vs
+    // opened tray) and carries the group's identity; it is tinted like the
+    // section label so it never reads as one more Workspace folder.
+    '.dtw-stateIcon{color:var(--dsw-alias-label-secondary)}',
+    '.dtw-groupRow:hover .dtw-stateIcon{color:var(--dsw-alias-label-primary)}',
     '.dtw-chevron{display:none}',
     '.dtw-projectRow:hover .dtw-chevron{display:inline-flex}',
     '.dtw-projectRow:hover .dtw-folder{display:none}',
