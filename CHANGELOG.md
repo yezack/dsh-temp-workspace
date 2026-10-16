@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [0.3.0] - 2026
+## [0.2.1] - 2026
 
 ### Added
 - **A `新建临时工作区` control on the blank New Session page**, in the hero's
