@@ -15,9 +15,13 @@ itself** — the temp workspace leaves no trace.
 ## What it is
 
 - **Host half** (`lib/index.js`) — a Cordis plugin that injects
-  `webServer` / `webRuntime` / `workspaceRegistry` / `sessionPersistence`,
-  `settings` and `loader`, registers a browser-trust-fenced
-  `/temp-workspace/api` route, and drives the cleanup at boot.
+  `webServer` / `workspaceRegistry` / `sessionPersistence`, registers a
+  browser-trust-fenced `/temp-workspace/api` route, and drives the cleanup at
+  boot. Works on **dsh 0.1.x and 0.2+**: the trust verdict comes from
+  `connection.allowsRemoteAuthorities` on 0.2+, and from the 0.1.x-only
+  `webRuntime.trustedHosts` otherwise — `webRuntime` is deliberately *not* an
+  injected dependency, because dsh 0.2 removed it and an unsatisfied injection
+  would keep the whole plugin from activating.
 - **Browser half** (`src/client.js` → `lib/client.js`) — injects a small icon
   button beside the sidebar "+ Add workspace" button, renders the collapsible
   **临时工作区** group inside the native Workspace list (fed by this plugin's own

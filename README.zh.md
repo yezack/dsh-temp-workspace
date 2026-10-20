@@ -7,9 +7,11 @@
 ## 它是什么
 
 - **宿主半边**（`lib/index.js`）—— 一个 Cordis 插件，注入
-  `webServer` / `webRuntime` / `workspaceRegistry` / `sessionPersistence`、
-  `settings` 和 `loader`，注册受浏览器信任围墙保护的 `/temp-workspace/api` 路由，
-  并在启动时驱动清理逻辑。
+  `webServer` / `workspaceRegistry` / `sessionPersistence`，注册受浏览器信任围墙保护的
+  `/temp-workspace/api` 路由，并在启动时驱动清理逻辑。**dsh 0.1.x 与 0.2+ 都能跑**：信任判定在
+  0.2+ 取自 `connection.allowsRemoteAuthorities`，旧版回落到只有 0.1.x 才有的
+  `webRuntime.trustedHosts` —— `webRuntime` 刻意**不**列为注入依赖，因为 dsh 0.2 移除了它，
+  而注入不满足会让整个插件不激活。
 - **浏览器半边**（`src/client.js` → `lib/client.js`）—— 在侧边栏「+ 添加工作区」
   按钮旁注入一个小图标；在原生「工作区」列表内渲染可收起的 **临时工作区** 分组
   （数据来自本插件自己的路由，以及 `workspaces` / `uiWorkspace` / `sessions`
