@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.2] - 2026
+
+### Fixed
+- **Works on dsh 0.2 (`0.2.1-rc.2`), which removed the `webRuntime` service.**
+  `webRuntime` was part of the plugin's `inject` list, so cordis's injection gate
+  kept the **whole plugin** from activating (its only symptom was
+  `webRuntime — 提供者 0`). `inject` now declares just the three services the
+  plugin truly requires — `webServer`, `workspaceRegistry`, `sessionPersistence`
+  — and the browser-trust verdict is resolved per request instead:
+  - dsh >= 0.2: `connection.allowsRemoteAuthorities`, the same answer the shell
+    itself uses for every browser request;
+  - dsh <= 0.1.x: `webRuntime.trustedHosts`, compared against the request's Host.
+  One build therefore works on both releases.
+- Audited every other host service against 0.2.1 while fixing this: the route
+  shape (`webServer.register({ kind: 'prefix', path, handler(req, res) })`) and
+  the `workspaceRegistry` (`create`/`get`/`list`/`delete`/`insertBefore`/
+  `archiveSession`/`unarchiveSession`/`resolveByPath`/`attachSession`) and
+  `sessionPersistence` (`root`/`locate`/`list`/`create`/`open`/`stat`) surfaces
+  are unchanged, as are the client services this plugin injects (`workspaces`,
+  `uiWorkspace`, `sessions`, `slots`, `locale`).
+
 ## [0.2.1] - 2026
 
 ### Added
