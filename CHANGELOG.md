@@ -2,6 +2,58 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.3] - 2026
+
+### Fixed
+- **`新建会话` stopped opening the blank New Session page when another plugin
+  wrapped `uiWorkspace.startSession`.** The "no argument means no Workspace"
+  rule was a one-off method assignment made at activation, so any plugin that
+  replaced the method later silently took over the call. `@linxin666/dsh-client-ui-git-graph`'s
+  *auto-isolation* does exactly that: it pre-resolves the target Workspace for
+  itself and forwards it to the previous implementation as an **explicit** id —
+  so the shipped policy bound the new session to the current/most-recent
+  Workspace again, and the hero page opened with a Workspace already chosen.
+  The interception is now installed as a **property accessor**: a later
+  assignment of `startSession` is captured by the setter and the plugin's
+  policy is re-wrapped around it, so it stays outermost no matter which plugin
+  patches last. A bare call still clears the panel; an explicit Workspace id
+  (workspace-row `＋`) and draft options — `startSession(void 0, { agentPreset })`,
+  used by the agent-preset creator chip — are forwarded untouched.
+
+### Added
+- **Interop with `dsh-better-workspace`.** That plugin owns the sidebar
+  Workspace tree and derives virtual folders from every `/` in a Workspace title
+  (`web/前端` nests under `web`). When it is part of the client graph — checked
+  in the boot manifest (`dsh-better-workspace`), with a `.bw-tree` DOM probe as
+  fallback — this plugin now rides that mechanism instead of injecting its own
+  group:
+  - temporary workspaces are titled **`临时工作区/yyyyMMdd`** (e.g.
+    `临时工作区/20261020`), so better-workspace nests all of them under one
+    `临时工作区` folder. A same-day collision gets `-2`, `-3`, …;
+  - the sidebar injection is skipped entirely (no group row, no native-row
+    hiding, no 4 s list poll) — the tree, rename/delete/reorder all come from
+    better-workspace. Renaming goes through the registry `rename` call
+    better-workspace's own rename uses; deleting through its menu still runs this
+    plugin's cleanup hook (sessions + directory + marker);
+  - the hero `新建临时工作区` chip, the boot confirm dialog and the settings
+    card are unchanged.
+  Note: better-workspace's **视图选项 → 工作区分组** must be **磁盘 + 名称** or
+  **仅名称**; its default **磁盘目录** does not derive `/` groups and shows the
+  raw `临时工作区/20261020` title flat.
+
+### Removed
+- **The sidebar "临时工作区" hourglass icon button** next to «Add workspace», and
+  all the machinery that only existed to keep it alive: `findAddButton` /
+  `insertIcon`, the `ADD_LABELS` / `ICON_CLASS` / `BUTTON_CLASS` constants, the
+  `inserting` guard, the icon calls in the locale subscription, the rAF
+  scheduler and the dispose path, and the now-unused `iconTitle` locale string.
+  Creating a temp workspace is still reachable from the blank New Session page's
+  **`新建临时工作区`** chip and from the **临时工作区** group row's **＋**. The
+  icon was also the fragile part of the DOM decoration: it matched the native
+  «Add workspace» button by *exact* `aria-label`, so a plugin that re-renders
+  that header with a shortcut suffix in the label (e.g. `dsh-better-workspace`'s
+  own `添加工作区 (Ctrl+Alt+O)` button) silently left the icon un-rendered.
+
 ## [0.2.2] - 2026
 
 ### Fixed

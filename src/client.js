@@ -1,11 +1,12 @@
 // @yezack/dsh-temp-workspace — browser half SOURCE (editable).
 //
 // Three responsibilities:
-//   1. Inject a small icon button beside the sidebar's "Add workspace" (+)
-//      button. The workspace section header has no pluggable header-action
-//      slot, so (like dsh-workspace-auto-approval) we decorate the live DOM
-//      with a MutationObserver — React re-renders drop our node and the
-//      observer puts it back.
+//   1. Render the collapsible "临时工作区" group inside the sidebar's Workspace
+//      list and the "新建临时工作区" chip on the blank New Session page. The
+//      Workspace browser offers no slot for a synthetic group or a fourth hero
+//      control, so (like dsh-workspace-auto-approval) we decorate the live DOM
+//      with a MutationObserver — React re-renders drop our nodes and the
+//      observer puts them back.
 //   2. Register a Settings -> Plugins card (settings.plugin.item, keyed by the
 //      settings namespace) that lets the user choose delete timing (immediate
 //      vs. delayed + a delay) and whether to confirm before deleting.
@@ -82,9 +83,6 @@ const TRAY_OPEN_SVG =
   '<path d="M12 6.5V1.5M9 4l3-2.5L15 4" />' +
   '</svg>'
 
-const ICON_CLASS = 'dsh-temp-workspace-icon'
-const BUTTON_CLASS = 'dsh-temp-workspace-button'
-const ADD_LABELS = ['Add workspace', '添加工作区']
 const SECTION_CLASS = 'dsh-temp-workspace-section'
 const SECTION_ROW_HIDDEN = 'dshTempHidden'
 // The "New temporary workspace" control injected into the blank New Session
@@ -93,6 +91,36 @@ const HERO_BUTTON_CLASS = 'dsh-temp-workspace-hero'
 // The native Workspace picker's own label in that row; used to locate the row
 // when its CSS-module class name is unavailable.
 const HERO_WORKSPACE_LABELS = ['选择工作区', 'Select a workspace', 'Select workspace', 'Choose a workspace']
+
+// ── better-workspace interop ────────────────────────────────────────────────
+// dsh-better-workspace owns the sidebar Workspace tree and turns every `/` in a
+// Workspace title into a virtual group row (`web/前端` nests under `web`). When
+// it is present this plugin rides that mechanism — temp workspaces are titled
+// `临时工作区/yyyyMMdd` — and leaves the sidebar tree alone instead of injecting
+// its own 临时工作区 group.
+/**
+ * Whether dsh-better-workspace is part of this client's plugin graph. The boot
+ * manifest is authoritative; the DOM probe covers a host build that does not
+ * expose it (or where the manifest row is named differently).
+ */
+function detectBetterWorkspace() {
+  try {
+    const entries = window.__DSH_BOOT__ && window.__DSH_BOOT__.entries
+    if (Array.isArray(entries)) {
+      for (const entry of entries) {
+        const id = typeof entry === 'string' ? entry : entry && entry.id
+        if (id === 'dsh-better-workspace' || id === '@deepseek-ai/dsh-better-workspace') return true
+      }
+    }
+  } catch { /* fall through to the DOM probe */ }
+  try { return document.querySelector('.bw-tree') !== null } catch { return false }
+}
+
+/** `yyyyMMdd` in local wall-clock time — the child segment of a grouped title. */
+function tempDateStamp(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
+}
 
 // Required cordis services:
 //   - `slots`      — the settings card seat;
@@ -118,7 +146,7 @@ function apply(ctx) {
     const previous = window.__dshTempWorkspaceTeardown
     if (typeof previous === 'function') previous()
   } catch { /* noop */ }
-  for (const node of document.querySelectorAll('.' + SECTION_CLASS + ',.' + BUTTON_CLASS + ',.' + HERO_BUTTON_CLASS)) node.remove()
+  for (const node of document.querySelectorAll('.' + SECTION_CLASS + ',.' + HERO_BUTTON_CLASS)) node.remove()
 
   const workspaces = ctx.get ? ctx.get('workspaces') : ctx.workspaces
   const uiWorkspace = ctx.get ? ctx.get('uiWorkspace') : ctx.uiWorkspace
@@ -132,11 +160,18 @@ function apply(ctx) {
     try { activeLocale = locale && locale.getLocale ? (locale.getLocale().active === 'en' ? 'en' : 'zh') : 'zh' } catch { activeLocale = 'zh' }
   }
   syncLocale()
+
+  // better-workspace owns the sidebar tree, so its `/`-name grouping replaces
+  // this plugin's own 临时工作区 group (see detectBetterWorkspace).
+  const betterWorkspace = detectBetterWorkspace()
+  if (betterWorkspace) {
+    console.info(`[temp-workspace] dsh-better-workspace detected — temp workspaces are titled "${localeText('tempGroupName', '临时工作区')}/yyyyMMdd" and the sidebar tree is left to it`)
+  }
+
   if (locale && typeof locale.subscribe === 'function') {
     ctx.effect(() => {
       const off = locale.subscribe(() => {
         syncLocale()
-        insertIcon()
         insertHeroButton()
         mountSection()
         hideNativeTempRows()
@@ -149,8 +184,7 @@ function apply(ctx) {
   // ── inject card/dialog CSS once ──────────────────────────────────────────
   ctx.effect(() => injectStyle(), 'dsh-temp-workspace: styles')
 
-  // ── icon injection (unchanged from the first version) ────────────────────
-  let inserting = false
+  // ── DOM decoration scheduling (group + New Session hero chip) ────────────
   let scheduled = null
 
   // ── create a temp workspace (and open a conversation in it) ──────────────
@@ -169,7 +203,18 @@ function apply(ctx) {
       if (workspace === undefined || workspace === null) {
         throw new Error('create returned no workspace')
       }
-      await refreshTempEntries()
+      // Force the list read: the grouped title below disambiguates against the
+      // titles that already exist, so a stale cache must not decide it.
+      await refreshTempEntries(true)
+      if (betterWorkspace) {
+        // better-workspace nests Workspaces on `/`: name the throwaway after the
+        // day so every temp workspace shows up under one 临时工作区 group there.
+        const title = groupedTempTitle()
+        if (await renameWorkspaceTitle(workspace.workspaceId, title)) {
+          workspace.title = title
+          await refreshTempEntries(true)
+        }
+      }
       await openNewSession(workspace.workspaceId)
       return workspace
     } catch (error) {
@@ -238,15 +283,49 @@ function apply(ctx) {
   // page instead — the Workspace (or a fresh temporary one) is meant to be
   // chosen deliberately there. An explicit workspace id keeps its original
   // behaviour, which is what our own temp-workspace rows rely on.
+  //
+  // The interception is installed as a property accessor, not as a one-off
+  // method assignment: other plugins wrap the same service *after* this one
+  // activates, and a plain assignment silently loses the interception. The
+  // known offender is git-graph's "auto-isolation" wrapper, which replaces
+  // `startSession`, pre-resolves a Workspace for itself and forwards it as an
+  // AUTO-BIND: explicit id. A chain of plain assignments then hands that
+  // auto-bound call to the native method, and New Session goes back to binding
+  // the current Workspace. Capturing later replacements in the setter keeps
+  // this policy outermost, so it still sees the original no-argument call.
+  // The second argument is forwarded untouched: a caller may pass draft options
+  // with no Workspace (`startSession(void 0, { agentPreset })`, the agent-preset
+  // creator flow), and that call must keep its native meaning.
   if (uiWorkspace
     && typeof uiWorkspace.startSession === 'function'
     && typeof uiWorkspace.clearMain === 'function') {
-    const nativeStartSession = uiWorkspace.startSession.bind(uiWorkspace)
-    uiWorkspace.startSession = (workspaceId) => {
-      if (workspaceId !== undefined && workspaceId !== null && workspaceId !== '') {
-        return nativeStartSession(workspaceId)
+    let forwardStartSession = uiWorkspace.startSession.bind(uiWorkspace)
+    let startSessionPolicy = null
+    const rebuildStartSessionPolicy = () => {
+      const forward = forwardStartSession
+      startSessionPolicy = (...args) => {
+        const [workspaceId, options] = args
+        const explicit = workspaceId !== undefined && workspaceId !== null && workspaceId !== ''
+        if (explicit || options !== undefined) return forward(...args)
+        return uiWorkspace.clearMain()
       }
-      return uiWorkspace.clearMain()
+    }
+    rebuildStartSessionPolicy()
+    try {
+      Object.defineProperty(uiWorkspace, 'startSession', {
+        configurable: true,
+        enumerable: true,
+        get: () => startSessionPolicy,
+        set: (next) => {
+          if (typeof next !== 'function') return
+          forwardStartSession = next.bind(uiWorkspace)
+          rebuildStartSessionPolicy()
+        },
+      })
+    } catch {
+      // A frozen service cannot be instrumented; fall back to the plain
+      // assignment (correct until another plugin replaces the method).
+      uiWorkspace.startSession = startSessionPolicy
     }
   }
 
@@ -277,68 +356,6 @@ function apply(ctx) {
         console.error('[temp-workspace] delete cleanup failed', error)
       }
       return result
-    }
-  }
-
-  function findAddButton() {
-    const buttons = document.querySelectorAll('button')
-    for (const button of buttons) {
-      const label = button.getAttribute('aria-label')
-      if (label !== null && ADD_LABELS.includes(label)) return button
-    }
-    return null
-  }
-
-  function insertIcon() {
-    if (inserting) return
-    const add = findAddButton()
-    if (add === null) return
-    const container = add.parentElement
-    if (container !== null) {
-      container.style.maxWidth = 'none'
-      container.style.overflow = 'visible'
-    }
-    const title = localeText('iconTitle', 'Temporary workspace')
-    const next = add.nextElementSibling
-    if (next !== null && next.classList.contains(BUTTON_CLASS)) {
-      // Locale changed: refresh the existing button's accessible text.
-      next.setAttribute('aria-label', title)
-      next.setAttribute('title', title)
-      return
-    }
-
-    inserting = true
-    try {
-      const button = document.createElement('button')
-      button.type = 'button'
-      button.className = BUTTON_CLASS
-      button.setAttribute('aria-label', title)
-      button.setAttribute('title', title)
-      button.innerHTML =
-        '<span class="' + ICON_CLASS + '" aria-hidden="true">' + ICON_SVG + '</span>'
-      button.addEventListener('click', (event) => {
-        event.preventDefault()
-        event.stopPropagation()
-        void createTempWorkspace()
-      })
-      const dims = add.getBoundingClientRect()
-      const size = Math.max(dims.width, dims.height) || 28
-      button.style.width = size + 'px'
-      button.style.height = size + 'px'
-      button.style.display = 'inline-flex'
-      button.style.alignItems = 'center'
-      button.style.justifyContent = 'center'
-      button.style.flex = 'none'
-      button.style.padding = '0'
-      button.style.border = 'none'
-      button.style.background = 'transparent'
-      button.style.color = 'inherit'
-      button.style.cursor = 'pointer'
-      button.style.borderRadius = '50%'
-      button.style.marginLeft = '2px'
-      add.insertAdjacentElement('afterend', button)
-    } finally {
-      inserting = false
     }
   }
 
@@ -479,6 +496,42 @@ function apply(ctx) {
   function refreshTempEntries(force) {
     if (force !== true && Date.now() - tempFetchedAt < 3000) return Promise.resolve()
     return fetchTempEntries()
+  }
+
+  // ── better-workspace mode: grouped temp-workspace titles ────────────────────
+  /**
+   * The title for a NEW temp workspace when better-workspace renders the sidebar:
+   * `<group>/<yyyyMMdd>`. better-workspace treats every `/` in a title as a
+   * virtual folder, so all temp workspaces nest under one 临时工作区 group.
+   * A same-day collision gets `-2`, `-3`, … so two rows never read identically.
+   * @returns the grouped title, e.g. `临时工作区/20261020`.
+   */
+  function groupedTempTitle() {
+    const prefix = localeText('tempGroupName', '临时工作区')
+    const base = `${prefix}/${tempDateStamp()}`
+    const taken = new Set(tempEntries
+      .map((entry) => entry.title)
+      .filter((title) => typeof title === 'string'))
+    let title = base
+    for (let index = 2; taken.has(title); index += 1) title = `${base}-${index}`
+    return title
+  }
+
+  /**
+   * Rename a Workspace through the client registry service (what
+   * better-workspace's own rename action calls), so its tree re-derives the
+   * groups immediately.
+   * @returns true when the registry accepted the new title.
+   */
+  async function renameWorkspaceTitle(workspaceId, title) {
+    if (!workspaces || typeof workspaces.rename !== 'function') return false
+    try {
+      await workspaces.rename(workspaceId, title)
+      return true
+    } catch (error) {
+      console.error('[temp-workspace] rename failed', error)
+      return false
+    }
   }
 
   // ── tiny external snapshots the section subscribes to ─────────────────────
@@ -711,8 +764,12 @@ function apply(ctx) {
   let sectionHost = null
   let sectionRoot = null
 
-  /** Mount the group once and keep it as the last row of the native tree. */
+  /** Mount the group once and keep it as the first row of the native tree. */
   function mountSection() {
+    // better-workspace renders the Workspace tree itself (including its `/`
+    // name groups), so there is no native tree to anchor a second group into —
+    // and its rows carry no hook this plugin could safely decorate.
+    if (betterWorkspace) return
     if (sectionRoot === null) {
       sectionHost = document.createElement('div')
       sectionHost.className = SECTION_CLASS
@@ -769,6 +826,9 @@ function apply(ctx) {
    * Rows are never removed or moved, so React's reconciliation is untouched.
    */
   function hideNativeTempRows() {
+    // Nothing to hide in better-workspace's tree: it has no native row keys,
+    // and its rows are the ones that render the grouped temp workspaces.
+    if (betterWorkspace) return
     const workspaceIds = new Set()
     const sessionIds = new Set()
     for (const entry of tempEntries) {
@@ -798,7 +858,6 @@ function apply(ctx) {
     if (scheduled !== null) return
     scheduled = requestAnimationFrame(() => {
       scheduled = null
-      insertIcon()
       insertHeroButton()
       mountSection()
       hideNativeTempRows()
@@ -807,7 +866,6 @@ function apply(ctx) {
 
   const observer = new MutationObserver(schedule)
   observer.observe(document.body, { childList: true, subtree: true })
-  insertIcon()
   insertHeroButton()
   mountSection()
 
@@ -819,10 +877,14 @@ function apply(ctx) {
   // explicit dispose below, which a hot reload may reach without a fiber
   // teardown.
   let pollTimer = null
-  ctx.effect(() => {
-    pollTimer = setInterval(() => { void fetchTempEntries() }, 4000)
-    return () => { clearInterval(pollTimer); pollTimer = null }
-  }, 'dsh-temp-workspace: temp list poll')
+  // In better-workspace mode there is no plugin-rendered list to keep fresh —
+  // the tree comes from the Workspace registry — so skip the 4s list poll.
+  if (!betterWorkspace) {
+    ctx.effect(() => {
+      pollTimer = setInterval(() => { void fetchTempEntries() }, 4000)
+      return () => { clearInterval(pollTimer); pollTimer = null }
+    }, 'dsh-temp-workspace: temp list poll')
+  }
 
   // Fetch the temp entries once on boot; the timer above keeps them current.
   void fetchTempEntries().then(() => {
@@ -1114,7 +1176,7 @@ function apply(ctx) {
     observer.disconnect()
     if (scheduled !== null) cancelAnimationFrame(scheduled)
     for (const disposer of disposers) { try { disposer() } catch { /* noop */ } }
-    for (const node of document.querySelectorAll('.' + BUTTON_CLASS + ',.' + HERO_BUTTON_CLASS)) node.remove()
+    for (const node of document.querySelectorAll('.' + HERO_BUTTON_CLASS)) node.remove()
     if (sectionRoot !== null) {
       try { sectionRoot.unmount() } catch { /* noop */ }
       sectionRoot = null
@@ -1366,10 +1428,10 @@ const zhLocale = {
   movedTitle: '工作区已移动',
   movedDesc: '这些工作区已移出临时区域并转为永久工作区。为了让迁移的对话在新工作区下显示，请立即重启 Harness。',
   restartNow: '立即重启',
-  iconTitle: '临时工作区',
   keepTitle: '永久保留（移出临时区）',
   keepAria: '永久保留',
   sectionLabel: '临时工作区',
+  tempGroupName: '临时工作区',
   newTempWorkspace: '新建临时工作区',
   newSession: '新建会话',
   deleteTempWorkspace: '删除临时工作区',
@@ -1406,10 +1468,10 @@ const enLocale = {
   movedTitle: 'Workspace moved',
   movedDesc: 'The workspace(s) were moved out of the temporary area and are now permanent. For the migrated conversations to appear under the new workspace, restart the Harness now.',
   restartNow: 'Restart now',
-  iconTitle: 'Temporary workspace',
   keepTitle: 'Keep permanently (move out of temp)',
   keepAria: 'Keep permanently',
   sectionLabel: 'Temporary workspaces',
+  tempGroupName: 'Temporary workspace',
   newTempWorkspace: 'New temporary workspace',
   newSession: 'New session',
   deleteTempWorkspace: 'Delete temporary workspace',

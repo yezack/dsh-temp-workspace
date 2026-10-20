@@ -4,8 +4,8 @@ A DSH web **client plugin** that adds a **temporary workspace**.
 
 > [中文说明](README.zh.md)
 
-Click the small hourglass icon beside the sidebar's "Add workspace" (+) button
-to create a throwaway workspace — named after the moment you created it
+Click the **`新建临时工作区`** chip beside the blank New Session page's Workspace
+picker to create a throwaway workspace — named after the moment you created it
 (`2026-10-16 09:45`) — and open a fresh conversation in it. It shows up inside a
 collapsible **临时工作区** group in the ordinary Workspace list, so temporary
 work never mixes with your real projects. On the next Harness restart this
@@ -22,12 +22,13 @@ itself** — the temp workspace leaves no trace.
   `webRuntime.trustedHosts` otherwise — `webRuntime` is deliberately *not* an
   injected dependency, because dsh 0.2 removed it and an unsatisfied injection
   would keep the whole plugin from activating.
-- **Browser half** (`src/client.js` → `lib/client.js`) — injects a small icon
-  button beside the sidebar "+ Add workspace" button, renders the collapsible
+- **Browser half** (`src/client.js` → `lib/client.js`) — renders the collapsible
   **临时工作区** group inside the native Workspace list (fed by this plugin's own
-  route plus the `workspaces` / `uiWorkspace` / `sessions` client services),
-  registers a **Settings → Plugins** card, and shows a confirm dialog at boot
-  when the setting is enabled.
+  route plus the `workspaces` / `uiWorkspace` / `sessions` client services), places
+  a **`新建临时工作区`** chip on the blank New Session page, registers a
+  **Settings → Plugins** card, and shows a confirm dialog at boot when the setting
+  is enabled. With `dsh-better-workspace` installed it leaves the sidebar group
+  to that plugin's `/`-name grouping instead (see below).
 
 ## The 临时工作区 group
 
@@ -55,6 +56,28 @@ itself** — the temp workspace leaves no trace.
   **delete**; the group row's own **+** creates another temp workspace.
 - Clicking a conversation opens it exactly like a native row.
 
+## Coexisting with dsh-better-workspace
+
+`dsh-better-workspace` takes over the sidebar Workspace tree and derives virtual
+folders from every `/` in a Workspace title (`web/前端` nests under `web`). When
+it is detected — `dsh-better-workspace` in the client boot manifest, with a
+`.bw-tree` DOM probe as fallback — this plugin rides that mechanism and **stops
+injecting its own sidebar UI**:
+
+- Temp workspaces are titled **`临时工作区/yyyyMMdd`** (e.g. `临时工作区/20261020`),
+  so better-workspace nests all of them under one `临时工作区` virtual folder. A
+  same-day collision gets `-2`, `-3`, … so two rows never read identically.
+- The sidebar injection is off entirely: no plugin-rendered group, no native-row
+  hiding, no 4 s list poll. Grouping, renaming, deleting and reordering are
+  better-workspace's own UI; a delete still runs this plugin's cleanup hook
+  (sessions + directory + marker), and rename goes through the registry `rename`
+  call better-workspace itself uses.
+- The blank New Session page's **`新建临时工作区`** chip, the boot confirm dialog
+  and the settings card are unchanged.
+- Requires better-workspace's **视图选项 → 工作区分组** to be **磁盘 + 名称** or
+  **仅名称**; its default **磁盘目录** does not derive `/` groups and shows the
+  raw `临时工作区/20261020` title flat.
+
 ## Starting a new session
 
 - **`新建会话` opens the blank New Session page** — it does *not* auto-bind a
@@ -62,11 +85,17 @@ itself** — the temp workspace leaves no trace.
   shortcut) pick the current Session's Workspace, or the most recently active
   one; this plugin makes that no-argument call clear the main panel instead, so
   the Workspace is chosen deliberately. An explicit workspace id still behaves
-  natively.
+  natively. The interception is installed as a **property accessor**, not a
+  one-off method assignment: when another plugin wraps `uiWorkspace.startSession`
+  later (e.g. `@linxin666/dsh-client-ui-git-graph`'s auto-isolation resolves a
+  Workspace itself and forwards it as an explicit id), the setter captures that
+  replacement and re-wraps the policy around it, so the bare call keeps its
+  meaning wherever the patch sits in the chain. Draft options are forwarded
+  untouched: `startSession(void 0, { agentPreset })` keeps its native behaviour.
 - That page's control row gains a **`新建临时工作区`** chip beside the native
   `选择工作区` picker and the agent-preset chip (same metrics: 28px tall, 8px
   padding, 8px radius, 13px/500). It creates a temp workspace and opens a
-  conversation in it — the same action as the sidebar hourglass.
+  conversation in it — the same action as the group row's **+**.
 - The chip **disappears once a Workspace is chosen** for that New Session, since
   the choice has then been made. The state comes from the native chip itself
   (its `aria-label` stays the "choose workspace" call to action while its visible
@@ -223,7 +252,7 @@ temp-workspace-plugin/
   package.json       name, dsh.bundle.patch + dsh.client, exports
   cordis.patch.yml   inserts this plugin as a host Loader entry
   lib/index.js       node half — /temp-workspace/api route + settings + boot cleanup
-  src/client.js      browser half SOURCE (icon + settings card + confirm dialog)
+  src/client.js      browser half SOURCE (group + hero chip + settings card + dialog)
   lib/client.js      BUILT browser half (generated; do not edit)
   build.mjs          wrap src/client.js -> lib/client.js (HMR watch)
 ```
@@ -268,12 +297,11 @@ Reads accept `GET`, mutations `POST`.
 
 ## Notes / limits
 
-- The sidebar workspace browser has **no slot** for a header action and no slot
-  for a synthetic workspace group, so both the icon and the **临时工作区** group
-  are injected into the live DOM with a `MutationObserver` (same idiom as
-  `dsh-workspace-auto-approval`). The blank New Session page's control row is a
-  composition of three *single* slots, so the **`新建临时工作区`** chip is
-  injected there the same way — filling one of those slots would shadow the
+- The sidebar workspace browser has **no slot** for a synthetic workspace group
+  and the blank New Session page's control row is a composition of three *single*
+  slots, so both the **临时工作区** group and the **`新建临时工作区`** chip are
+  injected into the live DOM with a `MutationObserver` (same idiom as
+  `dsh-workspace-auto-approval`) — filling one of those slots would shadow the
   shipped UI. Temp workspaces' native rows are hidden with `display:none` — never
   moved, and the plugin's own subtrees are only ever appended as a trailing child,
   which React never references — so the native trees keep reconciling untouched.
@@ -281,8 +309,6 @@ Reads accept `GET`, mutations `POST`.
   matching update.
 - The native Workspace search can still surface a temp conversation; only the
   list rows are regrouped.
-- The add-workspace button only renders when the directory-flow hole is
-  occupied, so the temp-workspace icon appears only then too.
 - Cleaning removes session log directories directly. **Live** sessions owned by
   a temp workspace are torn down best-effort on delete (agent cancel + archive +
   live-store detach), so the conversations disappear even when the deletion runs
