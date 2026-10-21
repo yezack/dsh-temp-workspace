@@ -64,9 +64,10 @@ it is detected — `dsh-better-workspace` in the client boot manifest, with a
 `.bw-tree` DOM probe as fallback — this plugin rides that mechanism and **stops
 injecting its own sidebar UI**:
 
-- Temp workspaces are titled **`临时工作区/yyyyMMdd`** (e.g. `临时工作区/20261020`),
-  so better-workspace nests all of them under one `临时工作区` virtual folder. A
-  same-day collision gets `-2`, `-3`, … so two rows never read identically.
+- Temp workspaces are titled **`临时工作区/yyyyMMddHHmmss`** (e.g.
+  `临时工作区/20261021175513`), so better-workspace nests all of them under one
+  `临时工作区` virtual folder. The second-precision stamp already tells same-day
+  runs apart; a `-2`, `-3`, … suffix remains only as a same-second guard.
 - The sidebar injection is off entirely: no plugin-rendered group, no native-row
   hiding, no 4 s list poll. Grouping, renaming, deleting and reordering are
   better-workspace's own UI; a delete still runs this plugin's cleanup hook
@@ -76,7 +77,7 @@ injecting its own sidebar UI**:
   and the settings card are unchanged.
 - Requires better-workspace's **视图选项 → 工作区分组** to be **磁盘 + 名称** or
   **仅名称**; its default **磁盘目录** does not derive `/` groups and shows the
-  raw `临时工作区/20261020` title flat.
+  raw `临时工作区/20261021175513` title flat.
 
 ## Starting a new session
 

@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.4] - 2026
+
+### Changed
+- **The better-workspace-mode temp-workspace title now carries the time to the
+  second**: `临时工作区/yyyyMMddHHmmss` (e.g. `临时工作区/20261021175513`) instead of
+  `临时工作区/yyyyMMdd`. Second precision is enough to tell same-day runs apart on
+  its own, so the `-2` / `-3` suffix is now only a same-second guard; the
+  `临时工作区` group name (and therefore the nesting) is unchanged.
+
 ## [0.2.3] - 2026
 
 ### Fixed

@@ -96,8 +96,8 @@ const HERO_WORKSPACE_LABELS = ['选择工作区', 'Select a workspace', 'Select 
 // dsh-better-workspace owns the sidebar Workspace tree and turns every `/` in a
 // Workspace title into a virtual group row (`web/前端` nests under `web`). When
 // it is present this plugin rides that mechanism — temp workspaces are titled
-// `临时工作区/yyyyMMdd` — and leaves the sidebar tree alone instead of injecting
-// its own 临时工作区 group.
+// `临时工作区/yyyyMMddHHmmss` — and leaves the sidebar tree alone instead of
+// injecting its own 临时工作区 group.
 /**
  * Whether dsh-better-workspace is part of this client's plugin graph. The boot
  * manifest is authoritative; the DOM probe covers a host build that does not
@@ -116,10 +116,15 @@ function detectBetterWorkspace() {
   try { return document.querySelector('.bw-tree') !== null } catch { return false }
 }
 
-/** `yyyyMMdd` in local wall-clock time — the child segment of a grouped title. */
+/**
+ * `yyyyMMddHHmmss` in local wall-clock time — the child segment of a grouped
+ * title. Second precision keeps every temp workspace distinguishable on its own
+ * (the `-2` collision suffix below is only a last-resort guard).
+ */
 function tempDateStamp(date = new Date()) {
   const pad = (n) => String(n).padStart(2, '0')
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
+    + `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
 }
 
 // Required cordis services:
@@ -165,7 +170,7 @@ function apply(ctx) {
   // this plugin's own 临时工作区 group (see detectBetterWorkspace).
   const betterWorkspace = detectBetterWorkspace()
   if (betterWorkspace) {
-    console.info(`[temp-workspace] dsh-better-workspace detected — temp workspaces are titled "${localeText('tempGroupName', '临时工作区')}/yyyyMMdd" and the sidebar tree is left to it`)
+    console.info(`[temp-workspace] dsh-better-workspace detected — temp workspaces are titled "${localeText('tempGroupName', '临时工作区')}/yyyyMMddHHmmss" and the sidebar tree is left to it`)
   }
 
   if (locale && typeof locale.subscribe === 'function') {
@@ -501,10 +506,11 @@ function apply(ctx) {
   // ── better-workspace mode: grouped temp-workspace titles ────────────────────
   /**
    * The title for a NEW temp workspace when better-workspace renders the sidebar:
-   * `<group>/<yyyyMMdd>`. better-workspace treats every `/` in a title as a
+   * `<group>/<yyyyMMddHHmmss>`. better-workspace treats every `/` in a title as a
    * virtual folder, so all temp workspaces nest under one 临时工作区 group.
-   * A same-day collision gets `-2`, `-3`, … so two rows never read identically.
-   * @returns the grouped title, e.g. `临时工作区/20261020`.
+   * Second precision already tells same-day runs apart; if two creations still
+   * land in the same second a `-2`, `-3`, … suffix keeps the rows distinct.
+   * @returns the grouped title, e.g. `临时工作区/20261021175513`.
    */
   function groupedTempTitle() {
     const prefix = localeText('tempGroupName', '临时工作区')
